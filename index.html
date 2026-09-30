@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Escape the Office</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1e293b">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+:root{--bg:#f4f1ea;--fg:#222;--card:#fff;--floor:#e8e2d0;--floor2:#ded7c1;--wall:#6b7280;--acc:#e11d48;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15171c;--fg:#eee;--card:#23262e;--floor:#2f3340;--floor2:#2a2e3a;--wall:#4b5563}}
+:root[data-theme="dark"]{--bg:#15171c;--fg:#eee;--card:#23262e;--floor:#2f3340;--floor2:#2a2e3a;--wall:#4b5563}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px}
+h1{margin:0;font-size:22px}
+#wrap{position:relative;width:100%;max-width:480px}
+canvas{width:100%;display:block;border-radius:10px;border:3px solid var(--wall)}
+#hud{font-size:14px;font-weight:600}
+#msg{min-height:40px;max-width:480px;text-align:center;font-size:14px;margin:0}
+#ov{position:absolute;inset:0;background:rgba(0,0,0,.7);color:#fff;display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:16px;border-radius:10px}
+#ov h2{margin:0}
+button,input{font:inherit;padding:8px 14px;border-radius:8px;border:2px solid var(--wall);background:var(--card);color:var(--fg)}
+button{cursor:pointer}
+#pad{display:grid;grid-template-columns:repeat(3,60px);grid-template-rows:repeat(2,52px);gap:6px}
+#pad button{font-size:20px;padding:0}
+#skins{display:flex;gap:6px;align-items:center;font-size:13px}
+#skins button{font-size:20px;padding:4px 8px}
+#skins button.on{border-color:var(--acc)}
+</style></head><body>
+<h1>🏢 Escape the Office</h1>
+<div id="hud"></div>
+<div id="wrap"><canvas id="c" width="480" height="360"></canvas>
+<div id="ov"><h2 id="ot"></h2><div id="ox"></div><input id="oi" maxlength="6" placeholder="Enter code" inputmode="numeric"><button id="ob">OK</button></div></div>
+<p id="msg"></p>
+<div id="pad"><span></span><button data-d="0,-1">▲</button><span></span><button data-d="-1,0">◀</button><button data-d="0,1">▼</button><button data-d="1,0">▶</button></div>
+<div id="skins">Skin: <span id="sk"></span></div>
+<script>
+const T=40,W=12,H=9,SEE=4;
+const LV=[
+{name:"Cubicle Farm",code:null,notes:[],speed:450,wp:[[10,5],[2,5]],map:[
+"############","#P.....#..K#","#.####.#.###","#......#...#","#.####.###.#","#..........#","#.######.###","#.........D#","############"]},
+{name:"Break Room Blues",code:"4217",notes:["Sticky: 'Life, the universe & everything.' First two digits: 42","Sticky: 'Printer jams before deadline: 17 times.' Last two digits: 17"],speed:400,wp:[[6,2],[6,7]],map:[
+"############","#P...#....N#","#.##.#.##..#","#.#..#.#..##","#.#.##.#.#.#","#.#....#...#","#.####.###.#","#N.....T..D#","############"]},
+{name:"Executive Suite",code:"731",notes:["Sticky: 'Boss's parking spot is #731. He tells everyone.' Code: 731"],speed:340,wp:[[8,5],[4,3]],map:[
+"############","#P...#...NK#","#.##.#.###.#","#.#....#...#","#.####.###.#".replace("###.#","#.#.#").replace("#.####.#","#.####.#"),"#...#....#.#","###.#.####.#","#T..#.....D#","############"]}
+];
+LV[2].map[4]="#.#.####.#.#";
+const SKINS=["🧑‍💼","🐱","🦖","🤖"];let skin=0;
+const cv=document.getElementById("c"),g=cv.getContext("2d");
+const $=id=>document.getElementById(id);
+let li=0,map,p,boss,hasKey,read,solved,paused,timer,needK,needT,msg="";
+const wall=(x,y)=>map[y][x]==="#";
+function bfs(a,b){const q=[a],prev={[a]:null};while(q.length){const c=q.shift();if(c[0]===b[0]&&c[1]===b[1])break;
+for(const[d0,d1]of[[1,0],[-1,0],[0,1],[0,-1]]){const x=c[0]+d0,y=c[1]+d1,k=x+","+y;if(!wall(x,y)&&!(k in prev)){prev[k]=c;q.push([x,y]);}}}
+const out=[];let c=b;while(c&&!(c[0]===a[0]&&c[1]===a[1])){out.unshift(c);c=prev[c[0]+","+c[1]];}return out;}
+function load(i){li=i;const L=LV[i];map=L.map.map(r=>r.split(""));
+for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(map[y][x]==="P"){p={x,y};map[y][x]=".";}
+needK=L.map.join("").includes("K");needT=L.map.join("").includes("T");
+hasKey=false;read=new Set();solved=false;paused=false;
+boss={x:L.wp[0][0],y:L.wp[0][1],t:1,path:[]};boss.path=bfs([boss.x,boss.y],L.wp[1]);
+clearInterval(timer);timer=setInterval(bossStep,L.speed);
+say(i===0?"Get the 🔑 keycard, then reach the 🚪. Avoid the boss's red line of sight! (Arrows / WASD)":"Level "+(i+1)+": "+L.name);hud();}
+function say(m){$("msg").textContent=m;}
+function hud(){const L=LV[li];$("hud").textContent=`Level ${li+1}/3 · ${L.name}`+(needK?` · 🔑 ${hasKey?1:0}/1`:"")+(L.notes.length?` · 📝 ${read.size}/${L.notes.length}`:"")+(needT?` · 💻 ${solved?"hacked":"locked"}`:"");}
+function bossStep(){if(paused)return;const L=LV[li];
+if(!boss.path.length){boss.t=1-boss.t;boss.path=bfs([boss.x,boss.y],L.wp[boss.t]);}
+const n=boss.path.shift();if(n){boss.x=n[0];boss.y=n[1];}checkCaught();}
+function vision(){const v=[];for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){for(let k=1;k<=SEE;k++){const x=boss.x+dx*k,y=boss.y+dy*k;if(wall(x,y))break;v.push([x,y]);}}return v;}
+function checkCaught(){if(paused)return;if((p.x===boss.x&&p.y===boss.y)||vision().some(([x,y])=>x===p.x&&y===p.y)){paused=true;
+overlay("😡 BUSTED!","Boss: \"Got a minute? Let's circle back on this.\"","Try again",()=>load(li));}}
+function overlay(t,x,b,fn,input){$("ot").textContent=t;$("ox").textContent=x;$("ob").textContent=b;$("oi").style.display=input?"block":"none";$("oi").value="";$("ov").style.display="flex";
+$("ob").onclick=()=>{$("ov").style.display="none";fn($("oi").value);};if(input)setTimeout(()=>$("oi").focus(),50);}
+function doorOpen(){return(!needK||hasKey)&&(!needT||solved);}
+function move(dx,dy){if(paused)return;const x=p.x+dx,y=p.y+dy;if(wall(x,y))return;p.x=x;p.y=y;const ch=map[y][x];
+if(ch==="K"){hasKey=true;map[y][x]=".";say("Got the keycard! 🔑");}
+else if(ch==="N"){let i=0;for(let yy=0;yy<H;yy++)for(let xx=0;xx<W;xx++)if(LV[li].map[yy][xx]==="N"){if(xx===x&&yy===y){read.add(i);say("📝 "+LV[li].notes[i]);}i++;}}
+else if(ch==="T"){if(solved)say("Terminal already hacked. Nice.");else if(read.size<LV[li].notes.length)say("💻 Password protected. Someone must have left it on a sticky note...");
+else{paused=true;overlay("💻 Terminal","Enter the "+LV[li].code.length+"-digit code from the notes","Hack!",v=>{paused=false;if(v.trim()===LV[li].code){solved=true;say("ACCESS GRANTED. The door lock clicks open! 🔓");}else say("ACCESS DENIED. Boss got an alert email... hurry!");hud();},true);}}
+else if(ch==="D"){if(doorOpen()){paused=true;clearInterval(timer);if(li<2)overlay("🚪 Level clear!","Onward to the next floor...","Next level",()=>load(li+1));else overlay("🎉 YOU ESCAPED!","Freedom! Also, you're now unemployed. Worth it.","Play again",()=>load(0));}
+else say(needK&&!hasKey?"Locked! You need the keycard 🔑":"Locked! Hack the terminal 💻 first.");}
+hud();checkCaught();}
+function draw(){const cs=getComputedStyle(document.documentElement);g.clearRect(0,0,480,360);
+for(let y=0;y<H;y++)for(let x=0;x<W;x++){g.fillStyle=wall(x,y)?cs.getPropertyValue("--wall"):((x+y)%2?cs.getPropertyValue("--floor"):cs.getPropertyValue("--floor2"));g.fillRect(x*T,y*T,T,T);}
+g.fillStyle="rgba(225,29,72,.35)";for(const[x,y]of vision())g.fillRect(x*T,y*T,T,T);
+g.font="26px serif";g.textAlign="center";g.textBaseline="middle";
+const e=(s,x,y)=>g.fillText(s,x*T+T/2,y*T+T/2+2);
+for(let y=0;y<H;y++)for(let x=0;x<W;x++){const c=map[y][x];if(c==="K")e("🔑",x,y);else if(c==="N")e("📝",x,y);else if(c==="T")e(solved?"🖥️":"💻",x,y);else if(c==="D")e(doorOpen()?"🚪":"🔒",x,y);}
+e("😡",boss.x,boss.y);e(SKINS[skin],p.x,p.y);requestAnimationFrame(draw);}
+addEventListener("keydown",ev=>{if($("ov").style.display==="flex"){if(ev.key==="Enter")$("ob").click();return;}
+const m={ArrowUp:[0,-1],w:[0,-1],ArrowDown:[0,1],s:[0,1],ArrowLeft:[-1,0],a:[-1,0],ArrowRight:[1,0],d:[1,0]}[ev.key];if(m){ev.preventDefault();move(...m);}});
+document.querySelectorAll("#pad button").forEach(b=>b.addEventListener("pointerdown",ev=>{ev.preventDefault();move(...b.dataset.d.split(",").map(Number));}));
+SKINS.forEach((s,i)=>{const b=document.createElement("button");b.textContent=i>1?"🔒"+s:s;if(!i)b.className="on";
+b.onclick=()=>{if(i>1){say("Premium skins are coming soon! 🦖🤖");return;}skin=i;[...$("sk").children].forEach((c,j)=>c.className=j===i?"on":"");};$("sk").appendChild(b);});
+load(0);draw();
+</script><script>if('serviceWorker' in navigator){addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));}</script>
+</body></html>
